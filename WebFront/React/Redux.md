@@ -457,7 +457,7 @@ const store = createStore(
 
   上面代码中，`applyMiddleware`方法的三个参数，就是三个中间件。有的中间件有次序要求，使用前要查一下文档。比如，`logger`就一定要放在最后，否则输出结果会不正确。
 
-## applyMiddleware()
+### applyMiddleware()
 
 redux提供的原生方法, 它的原理是将所有中间件生成一个数组, 依次执行
 
@@ -482,7 +482,7 @@ export default function applyMiddleware(...middlewares) {
 
 以上是源码, 上面代码中，所有中间件被放进了一个数组`chain`，然后嵌套执行，最后执行`store.dispatch`。可以看到，中间件内部（`middlewareAPI`）可以拿到`getState`和`dispatch`这两个方法。
 
-## 异步操作的基本思路
+### 异步操作的基本思路
 
 与同步发送action不同, 异步调用需要包含三个Action(发布, 成功, 失败)
 
@@ -498,8 +498,8 @@ export default function applyMiddleware(...middlewares) {
 { type: 'FETCH_POSTS_REQUEST' }
     { type: 'FETCH_POSTS_FAILURE', error: 'Oops' }
     { type: 'FETCH_POSTS_SUCCESS', response: { ... } }
-    ```
-    
+  ```
+  
 - 异步操作State也要变更
 
     ```javascript
@@ -526,6 +526,8 @@ export default function applyMiddleware(...middlewares) {
 ## redux-thunk 中间件
 
 异步操作至少要送出两个 Action：用户触发第一个 Action，这个跟同步操作一样，没有问题；如何才能在操作结束时，系统自动送出第二个 Action 呢？
+
+首先我们必须改造Action
 
 奥妙就在Action Creator之中
 
@@ -567,7 +569,7 @@ store.dispatch(fetchPosts('reactjs')).then(() =>
 
 拿到结果后，先将结果转成 JSON 格式，然后再发出一个 Action（ `receivePosts(postTitle, json)`）。
 
-（1）`fetchPosts`返回了一个函数，而普通的 Action Creator 默认返回一个对象。
+（1）**`fetchPosts`返回了一个函数，而普通的 Action Creator 默认返回一个对象。**
 
 （2）返回的函数的参数是`dispatch`和`getState`这两个 Redux 方法，普通的 Action Creator 的参数是 Action 的内容。
 
@@ -575,9 +577,9 @@ store.dispatch(fetchPosts('reactjs')).then(() =>
 
 （4）异步操作结束之后，再发出一个 Action（`receivePosts(postTitle, json)`），表示操作结束。
 
-这样的处理，就解决了自动发送第二个 Action 的问题。但是，又带来了一个新的问题，Action 是由`store.dispatch`方法发送的。而`store.dispatch`方法正常情况下，参数只能是对象，不能是函数。
+这样的处理，就解决了自动发送第二个 Action 的问题。
 
-这时，就要使用中间件[`redux-thunk`](https://github.com/gaearon/redux-thunk)。
+但是，又带来了一个新的问题，Action 是由`store.dispatch`方法发送的。而`store.dispatch`方法正常情况下，参数只能是对象，不能是函数。这时，就要使用中间件[`redux-thunk`](https://github.com/gaearon/redux-thunk)。
 
 ```javascript
 import { createStore, applyMiddleware } from 'redux';
@@ -591,6 +593,88 @@ const store = createStore(
 );
 ```
 
-上面代码使用`redux-thunk`中间件，改造`store.dispatch`，使得后者可以接受函数作为参数。
+上面代码使用`redux-thunk`中间件，**改造`store.dispatch`，使得后者可以接受函数作为参数。**
 
-因此，异步操作的第一种解决方案就是，写出一个返回函数的 Action Creator，然后使用`redux-thunk`中间件改造`store.dispatch`。
+**因此，异步操作的第一种解决方案就是，写出一个返回函数的 Action Creator，然后使用`redux-thunk`中间件改造`store.dispatch`。**
+
+
+
+## redux-promise 中间件
+
+和thunk类似, 它将改造dispatch 使得store能够接受并处理promise对象
+
+也就是说我们可以使用ActionCreator创建一个返回值为Promise的Action
+
+> ```javascript
+> import { createStore, applyMiddleware } from 'redux';
+> import promiseMiddleware from 'redux-promise';
+> import reducer from './reducers';
+> 
+> const store = createStore(
+>   reducer,
+>   applyMiddleware(promiseMiddleware)
+> ); 
+> ```
+
+这个中间件使得`store.dispatch`方法可以接受 Promise 对象作为参数。这时，Action Creator 有两种写法。写法一，返回值是一个 Promise 对象。
+
+> ```javascript
+> const fetchPosts = 
+>   (dispatch, postTitle) => new Promise(function (resolve, reject) {
+>      dispatch(requestPosts(postTitle));
+>      return fetch(`/some/API/${postTitle}.json`)
+>        .then(response => {
+>          type: 'FETCH_POSTS',
+>          payload: response.json()
+>        });
+> });
+> ```
+
+写法二，Action 对象的`payload`属性是一个 Promise 对象。这需要从[`redux-actions`](https://github.com/acdlite/redux-actions)模块引入`createAction`方法，并且写法也要变成下面这样。
+
+> ```javascript
+> import { createAction } from 'redux-actions';
+> 
+> class AsyncApp extends Component {
+>   componentDidMount() {
+>     const { dispatch, selectedPost } = this.props
+>     // 发出同步 Action
+>     dispatch(requestPosts(selectedPost));
+>     // 发出异步 Action
+>     dispatch(createAction(
+>       'FETCH_POSTS', 
+>       fetch(`/some/API/${postTitle}.json`)
+>         .then(response => response.json())
+>     ));
+>   }
+> ```
+
+上面代码中，第二个`dispatch`方法发出的是异步 Action，只有等到操作结束，这个 Action 才会实际发出。注意，`createAction`的第二个参数必须是一个 Promise 对象。
+
+看一下`redux-promise`的[源码](https://github.com/acdlite/redux-promise/blob/master/src/index.js)，就会明白它内部是怎么操作的。
+
+> ```javascript
+> export default function promiseMiddleware({ dispatch }) {
+>   return next => action => {
+>     if (!isFSA(action)) {
+>       return isPromise(action)
+>         ? action.then(dispatch)
+>         : next(action);
+>     }
+> 
+>     return isPromise(action.payload)
+>       ? action.payload.then(
+>           result => dispatch({ ...action, payload: result }),
+>           error => {
+>             dispatch({ ...action, payload: error, error: true });
+>             return Promise.reject(error);
+>           }
+>         )
+>       : next(action);
+>   };
+> }
+> ```
+
+从上面代码可以看出，如果 Action 本身是一个 Promise，它 resolve 以后的值应该是一个 Action 对象，会被`dispatch`方法送出（`action.then(dispatch)`），但 reject 以后不会有任何动作；如果 Action 对象的`payload`属性是一个 Promise 对象，那么无论 resolve 和 reject，`dispatch`方法都会发出 Action。
+
+中间件和异步操作，就介绍到这里。[下一篇文章](http://www.ruanyifeng.com/blog/2016/09/redux_tutorial_part_three_react-redux.html)将是最后一部分，介绍如何使用`react-redux`这个库。
